@@ -1,0 +1,26 @@
+# SupportInsight
+
+Main Components:
+
+## Setup Server
+
+- Create .env in server directory, and put:
+
+  # MongoDB Configuration
+
+  MONGO_URI={mongo_uri}
+  MONGO_DB={db_name}
+
+  # Server Configuration
+
+- python -m venv venv
+- Run venv
+  - venv\Scripts\activate (Windows)
+- pip install -r requirements.txt
+
+## Run Python Server
+
+- cd server
+- Run venv
+  - venv\Scripts\activate (Windows)
+- uvicorn main:app
