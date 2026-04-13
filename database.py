@@ -1,18 +1,17 @@
 import os
 from dotenv import load_dotenv
-from pymongo.mongo_client import MongoClient
-from pymongo.server_api import ServerApi
+from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv()
 
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB = os.getenv("MONGO_DB")
 
-client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
+client = AsyncIOMotorClient(MONGO_URI)
 db = client[MONGO_DB]
 tickets_collection = db["tickets"]
 
-def test_connection():
+async def test_connection():
     """Test MongoDB connection by pinging the server."""
     try:
         client.admin.command('ping')
