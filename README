@@ -2,25 +2,31 @@
 
 Main Components:
 
-## Setup Server
+## Setup
 
-- Create .env in server directory, and put:
+  # Create a Virtual Enviroment
+
+  - python -m venv venv
+
+  # Activate Virtual Environment
+
+  - venv\Scripts\activate
+
+  # Install Dependencies
+
+  - pip install -r requirements.txt
+
+  # API Key Configuration
+
+  DEEPSEEK_API_KEY={api_key}
+  DEEPSEEK_BASE_URL={base_url}
 
   # MongoDB Configuration
 
   MONGO_URI={mongo_uri}
   MONGO_DB={db_name}
 
-  # Server Configuration
+## Run Application
 
-- python -m venv venv
-- Run venv
-  - venv\Scripts\activate (Windows)
-- pip install -r requirements.txt
-
-## Run Python Server
-
-- cd server
-- Run venv
-  - venv\Scripts\activate (Windows)
-- uvicorn main:app
+  - venv\Scripts\activate
+  - uvicorn main:app
