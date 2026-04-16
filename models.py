@@ -6,6 +6,7 @@ class TicketRequest(BaseModel):
     message: str
 
 class TicketAnalysis(BaseModel):
+    id: Optional[str] = None
     category: str
     priority: str
     draft_reply: str

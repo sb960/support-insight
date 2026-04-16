@@ -1,15 +1,24 @@
 import os
 import json
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from database import test_connection
+from database import test_connection, save_ticket, get_all_tickets, get_ticket_by_id, tickets_collection
 from openai import OpenAI
 from models import TicketRequest, TicketAnalysis
 from fastapi import HTTPException
+from typing import List, Optional
 
 load_dotenv()
 
 app = FastAPI(title="SupportInsightAPI", description="API for Support Insight", version="1.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 async def root():
@@ -76,6 +85,15 @@ async def analyze_ticket(request: TicketRequest):
             draft_reply=result.get("draft_reply", "Thank you for your message. We will get back to you shortly."),
             reasoning=result.get("reasoning")
         )
+
+        ticket_id = await save_ticket(
+            original_message=request.message,
+            category=analysis.category,
+            priority=analysis.priority,
+            draft_reply=analysis.draft_reply,
+            reasoning=analysis.reasoning
+        )
+
         return analysis
      
     except json.JSONDecodeError:
@@ -88,3 +106,26 @@ async def analyze_ticket(request: TicketRequest):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error analyzing ticket: {e}")
+
+@app.get("/history", response_model=List[dict])
+async def get_history(
+    limit: int = 50,
+    category: Optional[str] = None,
+    priority: Optional[str] = None,
+    search: Optional[str] = None
+    ):
+    """Retrieve all previously analyzed tickets."""
+    query = {}
+    if category:
+        query["category"] = category
+    if priority:
+        query["priority"] = priority
+    if search:
+        query["original_message"] = {"$regex": search, "$options": "i"}
+    cursor = tickets_collection.find(query).sort("created_at", -1).limit(limit)
+    tickets = []
+    async for doc in cursor:
+        doc["id"] = str(doc["_id"])
+        del doc["_id"]
+        tickets.append(doc)
+    return tickets
