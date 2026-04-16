@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 
 load_dotenv()
@@ -31,7 +31,7 @@ async def save_ticket(original_message: str, category: str, priority: str, draft
         "priority": priority,
         "draft_reply": draft_reply,
         "reasoning": reasoning,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now(timezone.utc)
     }
     result = await tickets_collection.insert_one(ticket)
     return str(result.inserted_id)
