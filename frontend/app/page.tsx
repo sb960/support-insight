@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { InputForm } from "@/components/ui/InputForm";
 import { AnalysisCard } from "@/components/ui/AnalysisCard";
+import { HistoryTable } from "@/components/ui/HistoryTable";
 
 interface AnalysisResult {
   category: string;
@@ -16,8 +17,9 @@ export default function Home() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastMessage, setLastMessage] = useState("");
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
 
-  const runAnalysis = async (message: string) => {
+  const runAnalysis = async (message: string): Promise<boolean> => {
     setIsLoading(true);
     setError(null);
 
@@ -36,8 +38,10 @@ export default function Home() {
 
       const data = await response.json();
       setResult(data);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -45,12 +49,14 @@ export default function Home() {
 
   const handleAnalyze = async (message: string) => {
     setLastMessage(message);
-    await runAnalysis(message);
+    const ok = await runAnalysis(message);
+    if (ok) setHistoryRefreshKey((k) => k + 1);
   };
 
   const handleRegenerate = async () => {
     if (!lastMessage) return;
-    await runAnalysis(lastMessage);
+    const ok = await runAnalysis(lastMessage);
+    if (ok) setHistoryRefreshKey((k) => k + 1);
   };
 
   return (
@@ -78,6 +84,8 @@ export default function Home() {
             onRegenerate={handleRegenerate}
           />
         )}
+
+        <HistoryTable refreshKey={historyRefreshKey} />
       </div>
     </main>
   );
