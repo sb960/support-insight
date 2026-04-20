@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const FASTAPI_URL = process.env.FASTAPI_URL || "http://localhost:8000";
+const FASTAPI_URL = process.env.FASTAPI_URL || 
+  (process.env.NODE_ENV === "production" 
+    ? "https://support-insight.vercel.app/" 
+    : "http://localhost:8000");
 
 export async function GET(request: NextRequest) {
   try {
