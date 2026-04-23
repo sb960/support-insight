@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface Ticket {
   id: string;
@@ -154,7 +155,11 @@ export function HistoryTable({ refreshKey = 0, pollMs = 10000 }: HistoryTablePro
         
         {/* Table */}
         {loading ? (
-          <div className="text-center py-8 text-gray-500">Loading...</div>
+          <div className="space-y-3">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
         ) : (
           <div className="rounded-md border">
             <Table>

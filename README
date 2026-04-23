@@ -1,32 +1,41 @@
 # SupportInsight
 
-Main Components:
+AI-powered customer support triage dashboard that automatically categorizes support messages and generates professional draft replies.
+
+## Tech Stack
+
+- Frontend: Next.js 15, TypeScript, Tailwind CSS, shadcn/ui
+- Backend: FastAPI (Python)
+- AI: Deepseek API (deepseek-chat model / DeepSeek-V3.2)
+- Database: MongoDB Atlas
+- Deployment: Vercel (Frontend), Railway (Backend)
 
 ## Setup
 
-  # Create a Virtual Enviroment
+### Backend Setup
 
+  # Virtual Enviroment
+
+  - cd backend
   - python -m venv venv
-
-  # Activate Virtual Environment
-
   - venv\Scripts\activate
 
   # Install Dependencies
 
   - pip install -r requirements.txt
 
-  # API Key Configuration
+  # Create .env file
 
-  DEEPSEEK_API_KEY={api_key}
-  DEEPSEEK_BASE_URL={base_url}
+  - DEEPSEEK_API_KEY=your_api_key
+  - DEEPSEEK_BASE_URL=your_base_url
+  - MONGO_URI=your_mongodb_uri
+  - MONGO_DB=your_db_name
 
-  # MongoDB Configuration
+  # Run Application
 
-  MONGO_URI={mongo_uri}
-  MONGO_DB={db_name}
+  - uvicorn main:app --reload
 
-## Run Application
-
-  - venv\Scripts\activate
-  - uvicorn main:app
+### Frontend Setup
+  - cd frontend
+  - npm install
+  - npm run dev
