@@ -5,3 +5,4 @@ __pycache__/
 test.py
 test_backend.py
 qna.txt
+test_get_sop.py

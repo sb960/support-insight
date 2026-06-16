@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 from datetime import datetime, timezone
 from bson import ObjectId
+from typing import Optional
 
 load_dotenv()
 
@@ -54,3 +55,15 @@ async def get_ticket_by_id(ticket_id: str):
         del doc["_id"]
         return doc
     return None
+
+async def get_sop_by_tag(tag: str) -> Optional[dict]:
+    """Return one SOP document whose `tags` array contains `tag` (string match)."""
+    if not tag:
+        return None
+    coll = tickets_collection.database["sops"]
+    doc = await coll.find_one({"tags": tag})
+    if not doc:
+        return None
+    doc["id"] = str(doc["_id"])
+    del doc["_id"]
+    return doc

@@ -3,7 +3,7 @@ import json
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from database import test_connection, save_ticket, get_all_tickets, get_ticket_by_id, tickets_collection
+from database import test_connection, save_ticket, get_all_tickets, get_ticket_by_id, tickets_collection, get_sop_by_tag
 from openai import OpenAI
 from models import TicketRequest, TicketAnalysis, SOPCreate, SOPResponse
 from fastapi import HTTPException, APIRouter, status
@@ -38,74 +38,134 @@ deepseek_client = OpenAI(
 
 @app.post("/analyze", response_model=TicketAnalysis)
 async def analyze_ticket(request: TicketRequest):
-    """Analyze a customer support message and return structured output."""
+    """
+    Two-pass analyze: classify -> fetch SOP -> instruct AI with SOP rules.
+    Extended to request SOP compliance auditing fields:
+      - is_sop_compliant: boolean
+      - confidence_score: float [0.0, 1.0]
+      - sop_rules_followed: list[string]
+    """
 
-    system_prompt = """You are a customer support triage assistant for a SaaS company.
-        Analyze the customer message and output a JSON object with exactly these fields:
-        {
-            "category": "bug" | "feature_request" | "refund" | "complaint" | "other",
-            "priority": "high" | "medium" | "low",
-            "draft_reply": "string containing a professional email reply",
-            "reasoning": "brief explanation of why you chose this category and priority"
-        }
+    def safe_bool(v):
+        return bool(v) if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes")
 
-        Category definitions:
-        - bug: Something is broken or not working as expected
-        - feature_request: User wants a new feature or improvement
-        - refund: User wants money back
-        - complaint: General dissatisfaction, not a specific bug
-        - other: Doesn't fit any above
+    def safe_float(v):
+        try:
+            f = float(v)
+            return max(0.0, min(1.0, f))
+        except Exception:
+            return 0.0
 
-        Priority definitions:
-        - high: Service down, billing issue, or angry customer
-        - medium: Bug affecting workflow, but workaround exists
-        - low: Feature request or minor issue
-
-        The draft_reply should:
-        - Be professional and empathetic
-        - Acknowledge the issue
-        - State what will happen next
-
-        Output ONLY valid JSON. No other text."""
+    def safe_str_list(v):
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(x) for x in v]
+        # sometimes model might return a single string like "['a','b']" or "a, b"
+        if isinstance(v, str):
+            # try JSON parse first
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return [str(x) for x in parsed]
+            except Exception:
+                pass
+            # fallback: split comma-separated
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return []
 
     try:
+        # 1) Fast classification pass (heuristic or classifier)
+        predicted_tag = predict_tag_from_text(request.message) or classify_message_category(request.message)
+
+        # 2) Fetch SOP by tag (if any)
+        sop_instructions = None
+        if predicted_tag:
+            sop_doc = await get_sop_by_tag(predicted_tag)
+            if sop_doc:
+                sop_instructions = sop_doc.get("content")
+
+        # 3) Construct system prompt (base + SOP if found)
+        system_prompt = """You are a customer support triage assistant for a SaaS company.
+Analyze the customer message and output a JSON object with exactly these fields:
+{
+  "category": "bug" | "feature_request" | "refund" | "complaint" | "other",
+  "priority": "high" | "medium" | "low",
+  "draft_reply": "string containing a professional email reply",
+  "reasoning": "brief explanation of why you chose this category and priority",
+  "is_sop_compliant": true | false,
+  "confidence_score": 0.0,   // float between 0.0 and 1.0
+  "sop_rules_followed": ["step 1 text", "step 2 text"]  // array of strings, explicitly list which SOP steps were applied
+}
+Output ONLY valid JSON. No other text."""
+
+        if sop_instructions:
+            # Make SOP rules explicit and instruct the model to evaluate compliance.
+            system_prompt += (
+                "\n\nCOMPANY SOP INSTRUCTIONS (apply these rules exactly):\n"
+                + sop_instructions
+                + "\n\nAfter producing the draft reply, CHECK whether the reply fully follows the SOP text above. "
+                "Set `is_sop_compliant` to true only if the reply *explicitly follows* the SOP rules; otherwise false. "
+                "List the concrete SOP steps you followed in `sop_rules_followed`. Provide a numeric `confidence_score` "
+                "between 0.0 (no confidence) and 1.0 (very confident) that the classification and compliance check are correct."
+            )
+
+        # 4) Final AI call to produce structured output (same mechanics)
         response = deepseek_client.chat.completions.create(
             model="deepseek-chat",
             response_format={"type": "json_object"},
-            messages= [
+            messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": request.message}
-            ]
+                {"role": "user", "content": request.message},
+            ],
         )
 
+        # Parse the model output (expected JSON string)
         content = response.choices[0].message.content
         result = json.loads(content)
 
+        # Defensive extraction with fallbacks
+        category = result.get("category", "other")
+        priority = result.get("priority", "medium")
+        draft_reply = result.get("draft_reply", "Thank you for your message. We will get back to you shortly.")
+        reasoning = result.get("reasoning")
+
+        is_sop_compliant = safe_bool(result.get("is_sop_compliant", False))
+        confidence_score = safe_float(result.get("confidence_score", 0.0))
+        sop_rules_followed = safe_str_list(result.get("sop_rules_followed", []))
+
         analysis = TicketAnalysis(
-            category=result.get("category", "other"),
-            priority=result.get("priority", "medium"),
-            draft_reply=result.get("draft_reply", "Thank you for your message. We will get back to you shortly."),
-            reasoning=result.get("reasoning")
+            category=category,
+            priority=priority,
+            draft_reply=draft_reply,
+            reasoning=reasoning,
+            is_sop_compliant=is_sop_compliant,
+            confidence_score=confidence_score,
+            sop_rules_followed=sop_rules_followed,
         )
 
+        # Persist ticket (unchanged) — you may want to store these new fields too
         ticket_id = await save_ticket(
             original_message=request.message,
             category=analysis.category,
             priority=analysis.priority,
             draft_reply=analysis.draft_reply,
-            reasoning=analysis.reasoning
+            reasoning=analysis.reasoning,
         )
 
         return analysis
-     
+
     except json.JSONDecodeError:
+        # JSON parsing failed — return safe fallback with compliance=false, confidence=0.0
         return TicketAnalysis(
             category="other",
             priority="medium",
             draft_reply="Thank you for your message. Our team will review this and respond shortly.",
-            reasoning="AI response was not valid JSON"
+            reasoning="AI response was not valid JSON",
+            is_sop_compliant=False,
+            confidence_score=0.0,
+            sop_rules_followed=[],
         )
-    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error analyzing ticket: {e}")
 
@@ -202,3 +262,40 @@ async def delete_sop(sop_id: str):
         result = await tickets_collection.database["sops"].delete_one({"_id": ObjectId(sop_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="SOP not found")
+
+def predict_tag_from_text(text: str) -> Optional[str]:
+    txt = (text or "").lower()
+    if "refund" in txt or "money back" in txt:
+        return "refund"
+    if "bill" in txt or "invoice" in txt or "charge" in txt:
+        return "billing"
+    if "bug" in txt or "error" in txt or "not working" in txt:
+        return "bug"
+    if "feature" in txt or "would like" in txt or "enhancement" in txt:
+        return "feature_request"
+    if "complain" in txt or "unhappy" in txt or "angry" in txt:
+        return "complaint"
+    return None
+
+# Lightweight AI classifier: returns a category string or None
+def classify_message_category(message: str) -> Optional[str]:
+    classifier_system = (
+        "You are a concise classifier. Read the user's message and return EXACTLY a JSON object "
+        'with one field: {"category": "<one-of: bug, feature_request, refund, complaint, other>"} '
+        "No extra text, no explanation."
+    )
+    try:
+        resp = deepseek_client.chat.completions.create(
+            model="deepseek-chat",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": classifier_system},
+                {"role": "user", "content": message},
+            ],
+            max_tokens=60,
+        )
+        content = resp.choices[0].message.content
+        parsed = json.loads(content)
+        return parsed.get("category")
+    except Exception:
+        return None

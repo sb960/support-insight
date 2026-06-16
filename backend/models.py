@@ -12,6 +12,9 @@ class TicketAnalysis(BaseModel):
     priority: str
     draft_reply: str
     reasoning: Optional[str] = None
+    is_sop_compliant: bool = False
+    confidence_score: float = 0.0
+    sop_rules_followed: List[str] = []
 
 class TicketResponse(BaseModel):
     id: str
