@@ -1,26 +1,31 @@
-import * as React from "react";
+import React from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-interface Props {
-  searchTerm: string;
-  setSearchTerm: (v: string) => void;
-  onCreate: () => void;
-}
+type Props = {
+    searchTerm: string;
+    setSearchTerm: (v: string) => void;
+    onCreate: () => void;
+};
 
-export function SopHeader({ searchTerm, setSearchTerm, onCreate }: Props) {
+export const SopHeader: React.FC<Props> = ({ searchTerm, setSearchTerm, onCreate }) => {
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setSearchTerm(e.target.value);
+    };
+
   return (
-    <div className="flex items-center justify-between mb-4">
-      <Input
-        placeholder="Search SOPs by title or tag"
-        value={searchTerm}
-        onChange={(e) => setSearchTerm((e.target as HTMLInputElement).value)}
-        className="w-80"
-      />
+    <header className="flex items-center justify-between mb-4" aria-label="SOP controls">
+        <Input
+            placeholder="Search SOPs by title or tag"
+            value={searchTerm}
+            onChange={handleChange}
+            className="w-80"
+            aria-label="Search SOPs"
+        />
 
-      <Button onClick={onCreate} className="ml-4">
-        + New SOP
-      </Button>
-    </div>
+        <Button onClick={onCreate} className="ml-4" aria-label="Create new SOP">
+            + New SOP
+        </Button>
+    </header>
   );
-}
+};
