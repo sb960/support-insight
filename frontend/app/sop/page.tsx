@@ -34,9 +34,7 @@ export default function SopsPage() {
     { id: string; title: string } | null
   >(null);
   const [deleting, setDeleting] = useState(false);
-  const [editTarget, setEditTarget] = useState<
-    { id: string; title: string; content: string; tags: string[] } | null
-  >(null);
+  const [editTarget, setEditTarget] = useState<SOP | null>(null);
 
   const [sops, setSops] = useState<SOP[]>([]);
   const [loading, setLoading] = useState(false);
@@ -104,42 +102,11 @@ export default function SopsPage() {
     }
   };
 
-  const openEdit = (sop: SOP) => {
-    setEditTarget({
-      id: sop.id,
-      title: sop.title,
-      content: sop.content,
-      tags: sop.tags,
-    });
-  };
-
+  const openEdit = (sop: SOP) => setEditTarget(sop);
   const closeEdit = () => setEditTarget(null);
-
   const handleUpdated = async () => {
-    if (!editTarget) return;
-    setDeleting(true);
-    try {
-      // Adjust path if your backend uses a different update route
-      const res = await fetch(
-        `http://localhost:8000/api/sops/${editTarget.id}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(editTarget),
-        }
-      );
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`Update failed (${res.status}) ${txt}`);
-      }
-      await fetchSops();
-      closeEdit();
-    } catch (err) {
-      console.error(err);
-      alert(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDeleting(false);
-    }
+    await fetchSops();
+    closeEdit();
   };
 
   return (
