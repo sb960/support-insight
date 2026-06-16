@@ -24,15 +24,32 @@ async def test_connection():
         print(f"Error connecting to MongoDB: {e}")
         return False
 
-async def save_ticket(original_message: str, category: str, priority: str, draft_reply: str, reasoning: str=None):
-    """Save an analyzed ticket to the database."""
+async def save_ticket(
+    original_message: str,
+    category: str,
+    priority: str,
+    draft_reply: str,
+    reasoning: str | None = None,
+    confidence_score: float = 0.0,
+    is_sop_compliant: bool = False,
+    sop_rules_followed: list | None = None,
+    status: str = "Auto-Drafted",
+    internal_notes: str | None = None,
+):
+    """Save an analyzed ticket including audit fields."""
+    now = datetime.now(timezone.utc)
     ticket = {
         "original_message": original_message,
         "category": category,
         "priority": priority,
         "draft_reply": draft_reply,
         "reasoning": reasoning,
-        "created_at": datetime.now(timezone.utc)
+        "confidence_score": float(confidence_score or 0.0),
+        "is_sop_compliant": bool(is_sop_compliant),
+        "sop_rules_followed": sop_rules_followed or [],
+        "status": status,
+        "internal_notes": internal_notes,
+        "created_at": now,
     }
     result = await tickets_collection.insert_one(ticket)
     return str(result.inserted_id)

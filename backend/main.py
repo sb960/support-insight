@@ -10,6 +10,7 @@ from fastapi import HTTPException, APIRouter, status
 from typing import List, Optional
 from bson import ObjectId
 from datetime import datetime, timezone
+from confidence_score import calculate_mathematical_confidence
 
 load_dotenv()
 
@@ -110,7 +111,8 @@ Output ONLY valid JSON. No other text."""
                 "between 0.0 (no confidence) and 1.0 (very confident) that the classification and compliance check are correct."
             )
 
-        # 4) Final AI call to produce structured output (same mechanics)
+        # 4) Final AI call to produce structured output (attempt to request logprobs)
+        # Note: confirm your Deepseek client supports `logprobs` and `top_logprobs` kwargs.
         response = deepseek_client.chat.completions.create(
             model="deepseek-chat",
             response_format={"type": "json_object"},
@@ -118,21 +120,50 @@ Output ONLY valid JSON. No other text."""
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": request.message},
             ],
+            # Try to request token logprobs if the Deepseek client supports these flags.
+            # If unsupported, these kwargs will be ignored or may raise — remove if needed.
+            logprobs=True,
+            top_logprobs=1,
         )
 
         # Parse the model output (expected JSON string)
         content = response.choices[0].message.content
         result = json.loads(content)
 
-        # Defensive extraction with fallbacks
+        # Defensive extraction with fallbacks (ensure variables are defined)
         category = result.get("category", "other")
         priority = result.get("priority", "medium")
-        draft_reply = result.get("draft_reply", "Thank you for your message. We will get back to you shortly.")
+        draft_reply = result.get(
+            "draft_reply", "Thank you for your message. We will get back to you shortly."
+        )
         reasoning = result.get("reasoning")
 
+        # Try to extract raw logprobs from response (varies by provider)
+        raw_logprobs = None
+        try:
+            ch0 = response.choices[0]
+            raw_logprobs = getattr(ch0, "logprobs", None) or (
+                getattr(ch0, "message", None) and getattr(ch0.message, "logprobs", None)
+            ) or (ch0.get("logprobs") if isinstance(ch0, dict) else None)
+        except Exception:
+            raw_logprobs = None
+
+        # Compute mathematical confidence (fallback to model-provided confidence if present)
+        math_confidence = calculate_mathematical_confidence(raw_logprobs)
+        # Prefer the mathematical score here
+        final_confidence = math_confidence
+
+        # Extract compliance fields defensively
         is_sop_compliant = safe_bool(result.get("is_sop_compliant", False))
-        confidence_score = safe_float(result.get("confidence_score", 0.0))
+        confidence_score = safe_float(result.get("confidence_score", final_confidence))
+        # Use math_confidence if the parsed JSON didn't include a usable value
+        if not confidence_score:
+            confidence_score = final_confidence
+
         sop_rules_followed = safe_str_list(result.get("sop_rules_followed", []))
+
+        # Optionally overwrite parsed result confidence with the computed value
+        result["confidence_score"] = confidence_score
 
         analysis = TicketAnalysis(
             category=category,
@@ -144,13 +175,36 @@ Output ONLY valid JSON. No other text."""
             sop_rules_followed=sop_rules_followed,
         )
 
-        # Persist ticket (unchanged) — you may want to store these new fields too
+        # determine routing based on confidence_score
+        confidence = getattr(analysis, "confidence_score", 0.0) or 0.0
+        try:
+            confidence = float(confidence)
+        except Exception:
+            confidence = 0.0
+
+        # Decide status based on SOP compliance (hard safety override)
+        if getattr(analysis, "is_sop_compliant", False) is False:
+            status_val = "Escalated"
+            internal_notes = (
+                "Auto-escalated: AI indicated the reply did NOT follow company SOPs. "
+                "Manual review required before sending."
+            )
+        else:
+            status_val = "Auto-Drafted"
+            internal_notes = "Auto-drafted: AI indicated the reply follows company SOPs."
+
+        # Persist ticket with audit fields (database.save_ticket supports these params)
         ticket_id = await save_ticket(
             original_message=request.message,
             category=analysis.category,
             priority=analysis.priority,
             draft_reply=analysis.draft_reply,
             reasoning=analysis.reasoning,
+            confidence_score=getattr(analysis, "confidence_score", 0.0),
+            is_sop_compliant=bool(getattr(analysis, "is_sop_compliant", False)),
+            sop_rules_followed=getattr(analysis, "sop_rules_followed", []),
+            status=status_val,
+            internal_notes=internal_notes,
         )
 
         return analysis
