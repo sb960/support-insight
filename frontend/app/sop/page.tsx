@@ -20,6 +20,8 @@ interface SOP {
   title: string;
   content: string;
   tags: string[];
+  created_at?: string;
+  updated_at?: string;
 }
 
 /**
@@ -109,8 +111,30 @@ export default function SopsPage() {
     closeEdit();
   };
 
+  function fmt(dt?: string) {
+    if (!dt) return "—";
+
+    const hasTZ = /([zZ]|[+\-]\d{2}:\d{2})$/.test(dt);
+    const iso = hasTZ ? dt : `${dt.endsWith('Z') ? dt : dt + 'Z'}`;
+
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+
+    // Format using the user's locale (local time)
+    return d.toLocaleString(undefined, {
+
+
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
   return (
-    <div className="p-8 max-w-6xl mx-auto space-y-6">
+     // set 7xl to none for full width
+    <div className="p-8 w-full max-w-7xl mx-auto space-y-6">
       <h1 className="text-3xl font-bold">Standard Operating Procedures</h1>
 
       <SopHeader
@@ -142,6 +166,8 @@ export default function SopsPage() {
             <TableHead>Title</TableHead>
             <TableHead>Content</TableHead>
             <TableHead>Tags</TableHead>
+            <TableHead>Created</TableHead>
+            <TableHead>Last modified</TableHead>
             <TableHead>Actions</TableHead>
           </TableRow>
         </TableHeader>
@@ -158,6 +184,8 @@ export default function SopsPage() {
                   ))}
                 </div>
               </TableCell>
+              <TableCell className="whitespace-nowrap text-sm">{fmt(sop.created_at)}</TableCell>
+              <TableCell className="whitespace-nowrap text-sm">{fmt(sop.updated_at)}</TableCell>
               <TableCell className="w-36">
                 <div className="flex gap-2">
                   <button
@@ -181,7 +209,7 @@ export default function SopsPage() {
           ))}
           {filteredSops.length === 0 && !loading && (
             <TableRow>
-              <TableCell colSpan={3}>
+              <TableCell colSpan={6}>
                 <p className="text-sm text-slate-500">No SOPs found.</p>
               </TableCell>
             </TableRow>

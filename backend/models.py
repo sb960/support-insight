@@ -24,13 +24,15 @@ class TicketResponse(BaseModel):
 class SOPBase(BaseModel):
     title: str = Field(..., description="Title of the operating procedure")
     content: str = Field(..., description="Detailed step-by-step instructions")
-    tags: List[str] = Field(default={}, description="Keywords for sorting like ['billing', 'refund']")
+    tags: List[str] = Field(default=list(), description="Keywords for sorting like ['billing', 'refund']")
 
 class SOPCreate(SOPBase):
     pass
 
 class SOPResponse(SOPBase):
     id: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         populate_by_name = True

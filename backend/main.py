@@ -9,6 +9,7 @@ from models import TicketRequest, TicketAnalysis, SOPCreate, SOPResponse
 from fastapi import HTTPException, APIRouter, status
 from typing import List, Optional
 from bson import ObjectId
+from datetime import datetime, timezone
 
 load_dotenv()
 
@@ -138,6 +139,9 @@ async def create_sop(sop: SOPCreate):
     and writes it asynchronously to MongoDB Atlas Cluster. 
     """
     sop_dict = sop.model_dump()
+    now = datetime.now(timezone.utc)
+    sop_dict["created_at"] = now
+    sop_dict["updated_at"] = now
     if "db_instance" in locals():
         result = await db_instance["sops"].insert_one(sop_dict)
     else:
@@ -172,6 +176,7 @@ async def update_sop(sop_id: str, sop: SOPCreate):
     if not ObjectId.is_valid(sop_id):
         raise HTTPException(status_code=400, detail="Invalid SOP ID format")
     sop_dict = sop.model_dump()
+    sop_dict["updated_at"] = datetime.now(timezone.utc)
     if "db_instance" in locals():
         result = await db_instance["sops"].update_one({"_id": ObjectId(sop_id)}, {"$set": sop_dict})
     else:
