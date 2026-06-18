@@ -15,6 +15,11 @@ class TicketAnalysis(BaseModel):
     confidence_score: float = 0.0
     sop_rules_followed: List[str] = Field(default_factory=list)
 
+class TicketUpdateRequest(BaseModel):
+    status: Optional[str] = None
+    draft_reply: Optional[str] = None
+    internal_notes: Optional[str] = None
+
 class TicketResponse(BaseModel):
     id: str
     original_message: str
