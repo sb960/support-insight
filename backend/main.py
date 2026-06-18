@@ -1,12 +1,12 @@
 import os
 import json
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from database import test_connection, save_ticket, get_all_tickets, get_ticket_by_id, tickets_collection, get_sop_by_tag
+from database import test_connection, save_ticket, get_ticket_by_id, tickets_collection, get_sop_by_tag
 from openai import OpenAI
-from models import TicketRequest, TicketAnalysis, SOPCreate, SOPResponse
-from fastapi import HTTPException, APIRouter, status
+from models import TicketRequest, TicketAnalysis, TicketUpdateRequest, SOPCreate, SOPResponse
+from auth import get_current_user, require_admin_role
 from typing import List, Optional
 from bson import ObjectId
 from datetime import datetime, timezone
@@ -223,7 +223,7 @@ Output ONLY valid JSON. No other text."""
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error analyzing ticket: {e}")
 
-@app.get("/history", response_model=List[dict])
+@app.get("/history", response_model=List[dict], dependencies=[Depends(get_current_user)])
 async def get_history(
     limit: int = 50,
     category: Optional[str] = None,
@@ -231,6 +231,14 @@ async def get_history(
     search: Optional[str] = None
     ):
     """Retrieve all previously analyzed tickets."""
+    return await _fetch_tickets(limit=limit, category=category, priority=priority, search=search)
+
+async def _fetch_tickets(
+    limit: int = 50,
+    category: Optional[str] = None,
+    priority: Optional[str] = None,
+    search: Optional[str] = None,
+):
     query = {}
     if category:
         query["category"] = category
@@ -246,7 +254,37 @@ async def get_history(
         tickets.append(doc)
     return tickets
 
-@app.post("/api/sops", response_model=SOPResponse, status_code=status.HTTP_201_CREATED)
+@app.get("/api/tickets", response_model=List[dict], dependencies=[Depends(get_current_user)])
+async def get_all_tickets(
+    limit: int = 50,
+    category: Optional[str] = None,
+    priority: Optional[str] = None,
+    search: Optional[str] = None,
+):
+    """Only authenticated users can load the data table queue array."""
+    return await _fetch_tickets(limit=limit, category=category, priority=priority, search=search)
+
+@app.patch("/api/tickets/{ticket_id}", dependencies=[Depends(get_current_user)])
+async def update_ticket_status(ticket_id: str, update_payload: TicketUpdateRequest):
+    """Only authenticated agents can execute state mutations."""
+    if not ObjectId.is_valid(ticket_id):
+        raise HTTPException(status_code=400, detail="Invalid ticket ID format")
+
+    update_data = update_payload.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    result = await tickets_collection.update_one(
+        {"_id": ObjectId(ticket_id)},
+        {"$set": update_data},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    updated = await get_ticket_by_id(ticket_id)
+    return updated
+
+@app.post("/api/sops", response_model=SOPResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin_role)])
 async def create_sop(sop: SOPCreate):
     """
     Accepts a new SOP form payload, validates its format via SOPCreate,
@@ -281,7 +319,7 @@ async def get_all_sops(tag: Optional[str]=None):
         sops.append(document)
     return sops
 
-@app.put("/api/sops/{sop_id}", response_model=SOPResponse)
+@app.put("/api/sops/{sop_id}", response_model=SOPResponse, dependencies=[Depends(require_admin_role)])
 async def update_sop(sop_id: str, sop: SOPCreate):
     """
     Updates an existing SOP document in the database by its unique ID.
@@ -303,7 +341,7 @@ async def update_sop(sop_id: str, sop: SOPCreate):
     del updated_sop["_id"]
     return updated_sop
 
-@app.delete("/api/sops/{sop_id}", status_code=status.HTTP_204_NO_CONTENT)
+@app.delete("/api/sops/{sop_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin_role)])
 async def delete_sop(sop_id: str):
     """
     Deletes an existing SOP document from the database by its unique ID.
