@@ -53,12 +53,14 @@ interface HistoryTableProps {
 export function HistoryTable({ refreshKey = 0, pollMs = 10000 }: HistoryTableProps) {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
 
   const fetchTickets = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const params = new URLSearchParams();
       if (categoryFilter !== "all") params.append("category", categoryFilter);
@@ -67,9 +69,22 @@ export function HistoryTable({ refreshKey = 0, pollMs = 10000 }: HistoryTablePro
 
       const response = await fetch(`/api/history?${params.toString()}`);
       const data = await response.json();
-      setTickets(data);
-    } catch (error) {
-      console.error("Failed to fetch tickets:", error);
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          setError("Sign in to view ticket history.");
+        } else {
+          setError(data?.error ?? "Failed to load ticket history.");
+        }
+        setTickets([]);
+        return;
+      }
+
+      setTickets(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Failed to fetch tickets:", err);
+      setError("Failed to load ticket history.");
+      setTickets([]);
     } finally {
       setLoading(false);
     }
@@ -152,6 +167,12 @@ export function HistoryTable({ refreshKey = 0, pollMs = 10000 }: HistoryTablePro
             </SelectContent>
           </Select>
         </div>
+
+        {error && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+            {error}
+          </div>
+        )}
         
         {/* Table */}
         {loading ? (

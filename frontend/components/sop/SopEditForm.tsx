@@ -53,7 +53,7 @@ export function SopEditForm({ initial, onClose, onSaved }: Props) {
         tags: parsed.tags,
       };
 
-      const res = await fetch(`http://localhost:8000/api/sops/${initial.id}`, {
+      const res = await fetch(`/api/sops/${initial.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

@@ -59,7 +59,7 @@ export function SopForm({ onClose, onCreated }: Props) {
         tags: parsed.tags,
       };
 
-      const res = await fetch("http://localhost:8000/api/sops", {
+      const res = await fetch("/api/sops", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
