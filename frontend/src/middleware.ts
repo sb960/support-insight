@@ -7,20 +7,21 @@ export function middleware(request: NextRequest) {
     const isAuthPage = pathname.startsWith("/login") || pathname.startsWith("/register");
 
     const isProtectedWorkspace =
-        pathname.startsWith("/tickets") || pathname.startsWith("/sop");
+        pathname.startsWith("/dashboard") ||
+        pathname.startsWith("/tickets") ||
+        pathname.startsWith("/sop");
 
     if (isProtectedWorkspace && !sessionToken) {
-        const loginUrl = new URL("/register", request.url);
-        return NextResponse.redirect(loginUrl);
+        return NextResponse.redirect(new URL("/register", request.url));
     }
 
     if (isAuthPage && sessionToken) {
-        return NextResponse.redirect(new URL("/tickets", request.url));
+        return NextResponse.redirect(new URL("/dashboard", request.url));
     }
 
     return NextResponse.next();
 }
 
 export const config = {
-    matcher: ["/tickets/:path*", "/sop/:path*", "/login", "/register"],
+    matcher: ["/dashboard/:path*", "/tickets/:path*", "/sop/:path*", "/login", "/register"],
 };
