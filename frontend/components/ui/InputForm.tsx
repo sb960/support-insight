@@ -7,24 +7,24 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
 
 interface InputFormProps {
-  onAnalyze: (message: string) => Promise<void>;
+  onSubmit: (message: string) => Promise<void>;
   isLoading: boolean;
 }
 
-export function InputForm({ onAnalyze, isLoading }: InputFormProps) {
+export function InputForm({ onSubmit, isLoading }: InputFormProps) {
   const [message, setMessage] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!message.trim()) return;
-    await onAnalyze(message);
+    await onSubmit(message);
     setMessage("");
   };
 
   return (
-    <Card className="mb-8">
+    <Card>
       <CardHeader>
-        <CardTitle>Analyze Customer Message</CardTitle>
+        <CardTitle>Submit test ticket</CardTitle>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -39,10 +39,10 @@ export function InputForm({ onAnalyze, isLoading }: InputFormProps) {
             {isLoading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Analyzing...
+                Submitting...
               </>
             ) : (
-              "Analyze Message"
+              "Submit ticket"
             )}
           </Button>
         </form>

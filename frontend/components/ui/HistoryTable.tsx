@@ -126,7 +126,7 @@ export function HistoryTable({ refreshKey = 0, pollMs = 10000 }: HistoryTablePro
   };
 
   return (
-    <Card className="mt-8">
+    <Card>
       <CardHeader>
         <CardTitle>Ticket History</CardTitle>
       </CardHeader>
