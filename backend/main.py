@@ -45,7 +45,11 @@ from services import generate_blog_task
 from typing import List, Optional
 from bson import ObjectId
 from datetime import datetime, timezone
-from confidence_score import calculate_mathematical_confidence
+from confidence_score import (
+    calculate_confidence,
+    derive_retrieval_signals,
+    extract_average_logprob,
+)
 
 load_dotenv()
 
@@ -157,24 +161,18 @@ Output ONLY valid JSON. No other text."""
     )
     reasoning = result.get("reasoning")
 
-    raw_logprobs = None
-    try:
-        ch0 = response.choices[0]
-        raw_logprobs = getattr(ch0, "logprobs", None) or (
-            getattr(ch0, "message", None) and getattr(ch0.message, "logprobs", None)
-        ) or (ch0.get("logprobs") if isinstance(ch0, dict) else None)
-    except Exception:
-        raw_logprobs = None
-
-    math_confidence = calculate_mathematical_confidence(raw_logprobs)
-    final_confidence = math_confidence
-
     is_sop_compliant = _safe_bool(result.get("is_sop_compliant", False))
-    confidence_score = _safe_float(result.get("confidence_score", final_confidence))
-    if not confidence_score:
-        confidence_score = final_confidence
 
     sop_rules_followed = _safe_str_list(result.get("sop_rules_followed", []))
+
+    avg_logprobs = extract_average_logprob(response)
+    retrieval_score, evidence_count = derive_retrieval_signals(message, sop_instructions)
+    confidence_score = calculate_confidence(
+        retrieval_score=retrieval_score,
+        evidence_count=evidence_count,
+        avg_logprobs=avg_logprobs,
+        compliance_met=is_sop_compliant,
+    )
 
     analysis = TicketAnalysis(
         category=category,

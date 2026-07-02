@@ -1,45 +1,177 @@
+"""Confidence scoring for SupportInsight.
+
+This module replaces the old single-signal logprob scorer with a multi-signal
+confidence calculator designed for high-precision routing:
+
+- retrieval quality
+- evidence density
+- model certainty
+- compliance gating
+
+The implementation intentionally fails low when signals are missing.
+"""
+
+from __future__ import annotations
+
 import math
-from typing import Any, List
+import re
+from typing import Any, Iterable, Optional
 
-def calculate_mathematical_confidence(response: Any) -> float:
-    """
-    Calculates a confidence score (0.0 to 1.0) using the geometric mean
-    of token probabilities from a modern OpenAI/Deepseek ChatCompletion response.
-    """
-    logprob_list: List[float] = []
-    
-    # 1. Safely extract logprobs from the modern response hierarchy
+DEFAULT_WEIGHTS = {
+    "retrieval": 0.35,
+    "evidence": 0.15,
+    "certainty": 0.30,
+    "compliance": 0.20,
+}
+
+_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "was",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+    "you",
+    "your",
+}
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _normalize_weights(weights: Optional[dict[str, float]]) -> dict[str, float]:
+    selected = dict(DEFAULT_WEIGHTS if weights is None else weights)
+    required_keys = set(DEFAULT_WEIGHTS)
+    if set(selected) != required_keys:
+        missing = required_keys - set(selected)
+        extra = set(selected) - required_keys
+        raise ValueError(f"weights must contain exactly {sorted(required_keys)}; missing={sorted(missing)} extra={sorted(extra)}")
+
+    total = sum(selected.values())
+    if abs(total - 1.0) > 1e-6:
+        raise ValueError(f"weights must sum to 1.0, got {total}")
+    return selected
+
+
+def _tokenize(text: Optional[str]) -> set[str]:
+    if not text:
+        return set()
+
+    tokens = set()
+    for raw_token in re.findall(r"[a-z0-9]+", text.lower()):
+        if len(raw_token) < 3 or raw_token in _STOPWORDS:
+            continue
+        tokens.add(raw_token)
+    return tokens
+
+
+def extract_average_logprob(response: Any) -> Optional[float]:
+    """Extract the average token log-probability from an OpenAI-style response."""
+    logprobs: list[float] = []
+
     try:
-        # Case A: Standard OpenAI Python SDK Object Notation
         if hasattr(response, "choices"):
-            content_logprobs = response.choices[0].logprobs.content
-            if content_logprobs:
-                for token_obj in content_logprobs:
-                    if hasattr(token_obj, "logprob"):
-                        logprob_list.append(float(token_obj.logprob))
-                        
-        # Case B: Dictionary Notation (if the response was dumped to JSON/dict)
-        elif isinstance(response, dict) and "choices" in response:
-            content_logprobs = response["choices"][0].get("logprobs", {}).get("content", [])
-            if content_logprobs:
-                for token_obj in content_logprobs:
-                    if "logprob" in token_obj:
-                        logprob_list.append(float(token_obj["logprob"]))
-                        
-    except (IndexError, TypeError, AttributeError, KeyError):
-        # Failsafe for entirely malformed responses
-        pass
+            choice = response.choices[0]
+            content = getattr(getattr(choice, "logprobs", None), "content", None) or []
+            for token_obj in content:
+                token_logprob = getattr(token_obj, "logprob", None)
+                if token_logprob is not None:
+                    logprobs.append(float(token_logprob))
+        elif isinstance(response, dict):
+            choices = response.get("choices", [])
+            if choices:
+                content = choices[0].get("logprobs", {}).get("content", [])
+                for token_obj in content:
+                    token_logprob = token_obj.get("logprob")
+                    if token_logprob is not None:
+                        logprobs.append(float(token_logprob))
+    except (IndexError, TypeError, AttributeError, KeyError, ValueError):
+        return None
 
-    # 2. Return fallback if no logprobs were successfully extracted
-    if not logprob_list:
-        return 0.5
-        
-    # 3. Calculate the geometric mean of probabilities
-    total = sum(logprob_list)
-    n = len(logprob_list)
-    
-    avg_logprob = total / n
-    confidence = math.exp(avg_logprob)
-    
-    # 4. Clamp the final float between 0.0 and 1.0 and round cleanly
-    return round(max(0.0, min(1.0, confidence)), 3)
+    if not logprobs:
+        return None
+
+    return sum(logprobs) / len(logprobs)
+
+
+def derive_retrieval_signals(
+    query_text: Optional[str],
+    context_text: Optional[str],
+    max_evidence_chunks: int = 5,
+) -> tuple[float, int]:
+    """Derive simple retrieval quality and evidence density signals from text overlap."""
+    query_tokens = _tokenize(query_text)
+    context_tokens = _tokenize(context_text)
+
+    if not query_tokens or not context_tokens:
+        return 0.0, 0
+
+    overlap = query_tokens & context_tokens
+    evidence_count = min(len(overlap), max_evidence_chunks)
+    retrieval_score = len(overlap) / max(len(query_tokens), 1)
+    return _clamp01(retrieval_score), evidence_count
+
+
+def calculate_confidence(
+    retrieval_score: Optional[float],
+    evidence_count: Optional[int],
+    avg_logprobs: Optional[float],
+    compliance_met: bool,
+    max_evidence_chunks: int = 5,
+    weights: Optional[dict[str, float]] = None,
+    compliance_cap: float = 0.4,
+) -> float:
+    """Calculate a gated, multi-signal confidence score in the range [0.0, 1.0]."""
+    selected_weights = _normalize_weights(weights)
+
+    retrieval_norm = 0.0 if retrieval_score is None else _clamp01(retrieval_score)
+    evidence_norm = 0.0 if not evidence_count or evidence_count <= 0 else min(1.0, evidence_count / max_evidence_chunks)
+    certainty_norm = 0.0 if avg_logprobs is None else _clamp01(math.exp(avg_logprobs))
+    compliance_norm = 1.0 if compliance_met else 0.0
+
+    weighted_score = (
+        selected_weights["retrieval"] * retrieval_norm
+        + selected_weights["evidence"] * evidence_norm
+        + selected_weights["certainty"] * certainty_norm
+        + selected_weights["compliance"] * compliance_norm
+    )
+
+    if not compliance_met:
+        weighted_score = min(weighted_score, compliance_cap)
+
+    return round(_clamp01(weighted_score), 3)
+
+
+if __name__ == "__main__":
+    import doctest
+
+    doctest.testmod()
+
+    print("Strong answer, compliant:      ", calculate_confidence(0.92, 3, -0.08, True))
+    print("Strong answer, non-compliant:  ", calculate_confidence(0.92, 3, -0.08, False))
+    print("No context, zero-token resp:   ", calculate_confidence(None, None, None, True))
