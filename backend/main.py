@@ -1,6 +1,6 @@
 import os
 import json
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from database import (
@@ -15,6 +15,10 @@ from database import (
     tenant_workspace_exists,
     tickets_collection,
     sops_collection,
+    save_blog_draft,
+    get_blog_draft_by_id,
+    update_blog_draft as update_blog_draft_record,
+    list_blog_drafts,
     get_sop_by_tag,
 )
 from openai import OpenAI
@@ -37,6 +41,7 @@ from auth import (
     create_access_token,
     hash_password,
 )
+from services import generate_blog_task
 from typing import List, Optional
 from bson import ObjectId
 from datetime import datetime, timezone
@@ -66,7 +71,6 @@ deepseek_client = OpenAI(
     api_key=os.environ.get("DEEPSEEK_API_KEY"),
     base_url=os.environ.get("DEEPSEEK_BASE_URL"),
 )
-
 
 def _safe_bool(v):
     return bool(v) if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes")
@@ -473,7 +477,6 @@ def predict_tag_from_text(text: str) -> Optional[str]:
         return "complaint"
     return None
 
-# Lightweight AI classifier: returns a category string or None
 def classify_message_category(message: str) -> Optional[str]:
     classifier_system = (
         "You are a concise classifier. Read the user's message and return EXACTLY a JSON object "
@@ -495,3 +498,104 @@ def classify_message_category(message: str) -> Optional[str]:
         return parsed.get("category")
     except Exception:
         return None
+
+
+async def _fetch_blog_drafts(tenant_id: str, limit: int = 50):
+    return await list_blog_drafts(tenant_id=tenant_id, limit=limit)
+
+@app.post("/api/blogs/generate", status_code=status.HTTP_202_ACCEPTED)
+async def generate_blog(
+    body: dict,
+    background_tasks: BackgroundTasks,
+    tenant_id: str = Depends(get_tenant_from_api_key),
+):
+    topic = body.get("topic", "").strip()
+    target_audience = body.get("target_audience")
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic is required")
+
+    draft_id = await save_blog_draft(
+        tenant_id=tenant_id,
+        topic=topic,
+        target_audience=target_audience,
+        status="processing",
+    )
+
+    background_tasks.add_task(
+        generate_blog_task,
+        draft_id=draft_id,
+        tenant_id=tenant_id,
+        topic=topic,
+        target_audience=target_audience,
+    )
+
+    return {"status": "accepted", "draft_id": draft_id}
+
+@app.get("/api/blogs/drafts", response_model=List[dict])
+async def get_blog_drafts(current_user: dict = Depends(get_current_user)):
+    return await _fetch_blog_drafts(current_user["tenant_id"])
+
+@app.patch("/api/blogs/drafts/{draft_id}")
+async def update_blog_draft(
+    draft_id: str,
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    if not ObjectId.is_valid(draft_id):
+        raise HTTPException(status_code=400, detail="Invalid draft ID format")
+
+    allowed_fields = {
+        "title",
+        "slug",
+        "body_markdown",
+        "excerpt",
+        "seo_keywords",
+        "target_audience",
+        "status",
+    }
+    updates = {k: v for k, v in payload.items() if k in allowed_fields}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    updated = await update_blog_draft_record(
+        draft_id=draft_id,
+        tenant_id=current_user["tenant_id"],
+        updates=updates,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return updated
+
+@app.post("/api/blogs/{draft_id}/publish")
+async def publish_blog(
+    draft_id: str,
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    if not ObjectId.is_valid(draft_id):
+        raise HTTPException(status_code=400, detail="Invalid draft ID format")
+
+    draft = await get_blog_draft_by_id(draft_id, tenant_id=current_user["tenant_id"])
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    updates = {
+        "title": payload.get("title", draft.get("title")),
+        "slug": payload.get("slug", draft.get("slug")),
+        "body_markdown": payload.get("body_markdown", draft.get("body_markdown")),
+        "excerpt": payload.get("excerpt", draft.get("excerpt")),
+        "seo_keywords": payload.get("seo_keywords", draft.get("seo_keywords", [])),
+        "target_audience": payload.get("target_audience", draft.get("target_audience")),
+        "status": "published",
+        "published_at": datetime.now(timezone.utc),
+    }
+
+    updated = await update_blog_draft_record(
+        draft_id=draft_id,
+        tenant_id=current_user["tenant_id"],
+        updates=updates,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Draft not found after update")
+
+    return updated
