@@ -4,7 +4,6 @@ import * as React from "react"
 // import * as SheetPrimitive from "@radix-ui/react-dialog"
 
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
 type SheetContextValue = {
@@ -58,6 +57,11 @@ function SheetClose({
     <button
       type="button"
       data-slot="sheet-close"
+      aria-label="Close"
+      className={cn(
+        "absolute top-3 right-3 inline-flex h-8 w-8 items-center justify-center rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+        props.className,
+      )}
       onClick={(e) => {
         onClick?.(e)
         context?.onOpenChange?.(false)
@@ -114,14 +118,7 @@ function SheetContent({
         {children}
         {showCloseButton && (
           <SheetClose>
-            <Button
-              variant="ghost"
-              className="absolute top-3 right-3"
-              size="icon-sm"
-            >
-              <XIcon />
-              <span className="sr-only">Close</span>
-            </Button>
+            <XIcon className="h-4 w-4" />
           </SheetClose>
         )}
       </div>
