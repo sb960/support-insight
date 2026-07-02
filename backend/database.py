@@ -18,6 +18,7 @@ tickets_collection = db["tickets"]
 api_keys_collection = db["tenant_api_keys"]
 users_collection = db["users"]
 sops_collection = db["sops"]
+blogs_collection = db["blog_drafts"]
 
 async def test_connection():
     """Test MongoDB connection by pinging the server."""
@@ -171,3 +172,104 @@ async def get_sop_by_tag(tag: str, tenant_id: Optional[str] = None) -> Optional[
     doc["id"] = str(doc["_id"])
     del doc["_id"]
     return doc
+
+async def save_blog_draft(
+    tenant_id: str,
+    topic: str,
+    target_audience: str | None = None,
+    status: str = "processing",
+    title: str | None = None,
+    slug: str | None = None,
+    body_markdown: str | None = None,
+    excerpt: str | None = None,
+    seo_keywords: list | None = None,
+    cms_url: str | None = None,
+):
+    now = datetime.now(timezone.utc)
+    draft = {
+        "tenant_id": tenant_id,
+        "topic": topic,
+        "target_audience": target_audience,
+        "title": title,
+        "slug": slug,
+        "body_markdown": body_markdown,
+        "excerpt": excerpt,
+        "seo_keywords": seo_keywords or [],
+        "status": status,
+        "created_at": now,
+        "published_at": None,
+        "cms_url": cms_url,
+    }
+    result = await blogs_collection.insert_one(draft)
+    return str(result.inserted_id)
+
+
+async def get_blog_draft_by_id(draft_id: str, tenant_id: str | None = None) -> Optional[dict]:
+    query: dict = {"_id": ObjectId(draft_id)}
+    if tenant_id:
+        query["tenant_id"] = tenant_id
+
+    doc = await blogs_collection.find_one(query)
+    if not doc:
+        return None
+
+    doc["id"] = str(doc["_id"])
+    del doc["_id"]
+    return doc
+
+
+async def update_blog_draft(draft_id: str, tenant_id: str, updates: dict) -> Optional[dict]:
+    updates["updated_at"] = datetime.now(timezone.utc)
+    await blogs_collection.update_one(
+        {"_id": ObjectId(draft_id), "tenant_id": tenant_id},
+        {"$set": updates},
+    )
+    return await get_blog_draft_by_id(draft_id, tenant_id=tenant_id)
+
+
+async def list_blog_drafts(tenant_id: str, limit: int = 50) -> list[dict]:
+    cursor = blogs_collection.find({"tenant_id": tenant_id}).sort("created_at", -1).limit(limit)
+    drafts = []
+    async for doc in cursor:
+        doc["id"] = str(doc["_id"])
+        del doc["_id"]
+        drafts.append(doc)
+    return drafts
+
+
+async def build_blog_context(tenant_id: str, topic: str, max_sops: int = 10, max_tickets: int = 10) -> str:
+    parts = [f"Topic: {topic}", ""]
+
+    sop_cursor = (
+        sops_collection.find({"tenant_id": tenant_id})
+        .sort("updated_at", -1)
+        .limit(max_sops)
+    )
+    sops = await sop_cursor.to_list(length=max_sops)
+    if sops:
+        parts.append("Approved company SOPs:")
+        for sop in sops:
+            parts.append(f"- {sop.get('title', '')}: {sop.get('content', '')}")
+
+    ticket_cursor = (
+        tickets_collection.find(
+            {
+                "tenant_id": tenant_id,
+                "status": {"$in": ["Resolved", "Auto-Drafted"]},
+            }
+        )
+        .sort("created_at", -1)
+        .limit(max_tickets)
+    )
+    tickets = await ticket_cursor.to_list(length=max_tickets)
+    if tickets:
+        parts.append("")
+        parts.append("Approved historical ticket knowledge:")
+        for ticket in tickets:
+            original = ticket.get("original_message", "")
+            reply = ticket.get("draft_reply", "")
+            parts.append(f"- Customer issue: {original}")
+            if reply:
+                parts.append(f"  Approved reply: {reply}")
+
+    return "\n".join(parts).strip()

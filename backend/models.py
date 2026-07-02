@@ -114,3 +114,21 @@ class SOPCreate(BaseModel):
 
 TicketResponse = TicketDocument
 SOPResponse = SopDocument
+
+class BlogDraftDocument(BaseModel):
+    id: Optional[str] = None
+    tenant_id: str
+    topic: str
+    target_audience: Optional[str] = None
+
+    title: Optional[str] = None
+    slug: Optional[str] = None
+    body_markdown: Optional[str] = None
+    excerpt: Optional[str] = None
+    seo_keywords: List[str] = Field(default_factory=list)
+
+    status: Literal["processing", "pending_review", "published", "failed"] = "processing"
+
+    created_at: Optional[datetime] = None
+    published_at: Optional[datetime] = None
+    cms_url: Optional[str] = None
