@@ -15,8 +15,7 @@ export default function RegisterPage() {
     const [confirmPassword, setConfirmPassword] = useState("");
     const [companyName, setCompanyName] = useState("");
     const [error, setError] = useState<string | null>(null);
-    const [apiKey, setApiKey] = useState<string | null>(null);
-    const [tenantId, setTenantId] = useState<string | null>(null);
+    const [registered, setRegistered] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -47,8 +46,7 @@ export default function RegisterPage() {
                 throw new Error(data.error ?? "Registration failed");
             }
 
-            setApiKey(data.ingest_api_key ?? null);
-            setTenantId(data.tenant_id ?? null);
+            setRegistered(true);
 
             setTimeout(() => router.push("/dashboard"), 2500);
         } catch (err) {
@@ -67,16 +65,11 @@ export default function RegisterPage() {
                 </p>
             </div>
 
-            {apiKey ? (
+            {registered ? (
                 <div className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm dark:border-emerald-800 dark:bg-emerald-950">
                     <p className="font-medium text-emerald-800 dark:text-emerald-200">
-                        Workspace created. Save your webhook API key — it won&apos;t be shown again.
+                        Registration successful. Redirecting to your dashboard...
                     </p>
-                    <p>
-                        <span className="font-medium">Tenant ID:</span> {tenantId}
-                    </p>
-                    <p className="break-all font-mono text-xs">{apiKey}</p>
-                    <p className="text-muted-foreground">Redirecting to your dashboard...</p>
                 </div>
             ) : (
                 <form onSubmit={handleSubmit} className="space-y-4">
