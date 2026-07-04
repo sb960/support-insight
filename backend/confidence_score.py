@@ -13,7 +13,6 @@ The implementation intentionally fails low when signals are missing.
 
 from __future__ import annotations
 
-import math
 import re
 from typing import Any, Iterable, Optional
 
@@ -151,7 +150,15 @@ def calculate_confidence(
 
     retrieval_norm = 0.0 if retrieval_score is None else _clamp01(retrieval_score)
     evidence_norm = 0.0 if not evidence_count or evidence_count <= 0 else min(1.0, evidence_count / max_evidence_chunks)
-    certainty_norm = 0.0 if avg_logprobs is None else _clamp01(math.exp(avg_logprobs))
+    # Model certainty:
+    # Instead of exp(), map the logprob range to [0, 1].
+    # Typical logprobs: 0.0 (perfect) to -2.0 (low confidence).
+    if avg_logprobs is None:
+        certainty_norm = 0.0
+    else:
+        # Clamp between -2.0 and 0.0, then map to 0.0 - 1.0.
+        # Anything better than 0 is 1.0, anything worse than -2 is 0.0.
+        certainty_norm = 1.0 - (max(0.0, min(2.0, abs(avg_logprobs))) / 2.0)
     compliance_norm = 1.0 if compliance_met else 0.0
 
     weighted_score = (

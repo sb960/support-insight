@@ -53,6 +53,8 @@ from confidence_score import (
 
 load_dotenv()
 
+CONFIDENCE_THRESHOLD = 0.70
+
 app = FastAPI(title="SupportInsightAPI", description="API for Support Insight", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -184,15 +186,26 @@ Output ONLY valid JSON. No other text."""
         sop_rules_followed=sop_rules_followed,
     )
 
-    if not analysis.is_sop_compliant:
+    if not analysis.is_sop_compliant or analysis.confidence_score < CONFIDENCE_THRESHOLD:
         status_val = "Escalated"
+        escalation_reasons = []
+        if not analysis.is_sop_compliant:
+            escalation_reasons.append("SOP violation")
+        if analysis.confidence_score < CONFIDENCE_THRESHOLD:
+            escalation_reasons.append(
+                f"low confidence ({analysis.confidence_score * 100:.0f}% < {CONFIDENCE_THRESHOLD * 100:.0f}%)"
+            )
         internal_notes = (
-            "Auto-escalated: AI indicated the reply did NOT follow company SOPs. "
-            "Manual review required before sending."
+            "Auto-escalated to human review due to "
+            + " and ".join(escalation_reasons)
+            + ". Manual review required before sending."
         )
     else:
         status_val = "Auto-Drafted"
-        internal_notes = "Auto-drafted: AI indicated the reply follows company SOPs."
+        internal_notes = (
+            f"Auto-drafted: AI indicated the reply follows company SOPs with "
+            f"{analysis.confidence_score * 100:.0f}% confidence."
+        )
 
     return await save_ticket(
         tenant_id=tenant_id,
