@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, Pencil, RefreshCw, Sparkles } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileText, Pencil, RefreshCw } from "lucide-react";
 
 import Container from "@/components/container";
 import { TopNav } from "@/components/nav";
@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { MarkdownContent } from "@/components/ui/markdown-content";
 import { Textarea } from "@/components/ui/textarea";
 
 type BlogDraft = {
@@ -221,7 +222,7 @@ export default function BlogsPage() {
                     <Card className="md:col-span-2">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
-                                <Sparkles className="h-4 w-4" />
+                                <FileText className="h-4 w-4" />
                                 Generate Blog Draft
                             </CardTitle>
                             <CardDescription>
@@ -354,12 +355,19 @@ export default function BlogsPage() {
                                     <Textarea value={excerpt} onChange={(e) => setExcerpt(e.target.value)} rows={3} />
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-sm font-medium">Body Markdown</label>
+                                    <label className="text-sm font-medium">Body</label>
                                     <Textarea
                                         value={bodyMarkdown}
                                         onChange={(e) => setBodyMarkdown(e.target.value)}
-                                        rows={14}
+                                        rows={10}
+                                        className="font-mono text-sm"
                                     />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-medium">Preview</label>
+                                    <div className="rounded-md border bg-muted/30 p-4 min-h-[12rem]">
+                                        <MarkdownContent content={bodyMarkdown} />
+                                    </div>
                                 </div>
                                 <div className="space-y-2">
                                     <label className="text-sm font-medium">SEO Keywords</label>

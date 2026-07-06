@@ -19,7 +19,7 @@ import {
     SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { AlertCircle, CheckCircle2, ShieldCheck, RefreshCw, Clock } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
 
 import Container from "@/components/container";
 import { TopNav } from "@/components/nav";
@@ -275,10 +275,18 @@ export default function AgentWorkspace() {
                                 <div className="p-4 bg-muted/50 rounded-lg border text-sm space-y-3">
                                     <div className="flex items-center justify-between border-b pb-2">
                                         <span className="text-muted-foreground">System Assessment Rule:</span>
-                                        <span className="font-semibold">
-                                            {selectedTicket.is_sop_compliant
-                                                ? "✅ SOP Rule Compliant"
-                                                : "❌ Manual Intervention Required"}
+                                        <span className="inline-flex items-center gap-1.5 font-semibold">
+                                            {selectedTicket.is_sop_compliant ? (
+                                                <>
+                                                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                                                    SOP compliant
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <XCircle className="h-4 w-4 text-destructive" />
+                                                    Manual review required
+                                                </>
+                                            )}
                                         </span>
                                     </div>
                                     {selectedTicket.sop_rules_followed &&

@@ -32,6 +32,32 @@ class IngestAckResponse(BaseModel):
     status: str = "accepted"
 
 
+class DemoSopInline(BaseModel):
+    title: str
+    content: str
+    tags: List[str] = Field(default_factory=list)
+
+
+class DemoTriageRequest(BaseModel):
+    """Public demo body — message plus optional in-browser SOPs; nothing is persisted."""
+    message: str = Field(..., min_length=1, max_length=5000)
+    sops: List[DemoSopInline] = Field(default_factory=list)
+
+
+class DemoTriageResponse(BaseModel):
+    original_message: str
+    category: str
+    priority: str
+    draft_reply: str
+    reasoning: Optional[str] = None
+    is_sop_compliant: bool = False
+    confidence_score: float = 0.0
+    sop_rules_followed: List[str] = Field(default_factory=list)
+    status: str
+    internal_notes: Optional[str] = None
+    rate_limit_remaining: int = 0
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str

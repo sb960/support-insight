@@ -80,7 +80,9 @@ async def _llm_json(messages: list[dict[str, str]]) -> dict[str, Any]:
 async def _run_outliner(topic: str, context: str, target_audience: Optional[str]) -> dict[str, Any]:
     system_prompt = (
         "You are the Outliner. Create a concise JSON outline for a blog post. "
-        "Return only valid JSON with fields: angle, suggested_title, sections, key_claims, seo_keywords."
+        "Return only valid JSON with fields: angle, suggested_title, sections (array of "
+        "{heading, bullets[]}), key_claims, seo_keywords. "
+        "Each section heading should be a clear H2 title; bullets are talking points for that section."
     )
     user_prompt = (
         f"Topic: {topic}\n"
@@ -97,8 +99,17 @@ async def _run_outliner(topic: str, context: str, target_audience: Optional[str]
 
 async def _run_writer(topic: str, context: str, outline: dict[str, Any]) -> str:
     system_prompt = (
-        "You are the Writer. Write a clean markdown blog post from the outline and context. "
-        "Use the outline faithfully. Output markdown only."
+        "You are the Writer. Write a well-structured markdown blog post from the outline and context.\n"
+        "Structure rules (follow strictly):\n"
+        "- Open with 2-3 short introductory sentences (plain paragraphs, no heading).\n"
+        "- Use ## for each main section from the outline (3-5 sections).\n"
+        "- Use ### only for subsections when needed.\n"
+        "- Keep paragraphs to 2-4 sentences. Put a blank line between every paragraph, heading, and list.\n"
+        "- Use numbered lists (1. 2. 3.) for step-by-step processes.\n"
+        "- Use bullet lists (- item) for requirements, tips, or examples.\n"
+        "- Use **bold** sparingly for key terms.\n"
+        "- Close with a brief ## Conclusion or ## Next steps section.\n"
+        "Output markdown only. No code fences. No JSON."
     )
     user_prompt = (
         f"Topic: {topic}\n\n"
@@ -118,7 +129,10 @@ async def _run_writer(topic: str, context: str, outline: dict[str, Any]) -> str:
 async def _run_editor(topic: str, context: str, outline: dict[str, Any], draft_markdown: str) -> dict[str, Any]:
     system_prompt = (
         "You are the Editor. Refine the draft for clarity and consistency. "
-        "Return only valid JSON with fields: title, slug, excerpt, body_markdown, seo_keywords."
+        "Return only valid JSON with fields: title, slug, excerpt, body_markdown, seo_keywords. "
+        "For body_markdown: preserve clear markdown structure with ## section headings, "
+        "short paragraphs separated by blank lines, and bullet or numbered lists. "
+        "Never collapse the article into one paragraph or remove headings/lists."
     )
     user_prompt = (
         f"Topic: {topic}\n\n"
