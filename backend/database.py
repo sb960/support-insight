@@ -3,7 +3,7 @@ import re
 import secrets
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 from typing import Optional
 
@@ -19,6 +19,10 @@ api_keys_collection = db["tenant_api_keys"]
 users_collection = db["users"]
 sops_collection = db["sops"]
 blogs_collection = db["blog_drafts"]
+demo_rate_limits_collection = db["demo_rate_limits"]
+
+DEMO_TRIAGE_LIMIT = 3
+DEMO_TRIAGE_WINDOW_HOURS = 24
 
 async def test_connection():
     """Test MongoDB connection by pinging the server."""
@@ -273,3 +277,61 @@ async def build_blog_context(tenant_id: str, topic: str, max_sops: int = 10, max
                 parts.append(f"  Approved reply: {reply}")
 
     return "\n".join(parts).strip()
+
+
+async def get_demo_triage_remaining(ip: str) -> int:
+    """How many demo triage attempts remain for this IP in the current window."""
+    if not ip or ip == "unknown":
+        ip = "unknown_ip"
+
+    now = datetime.now(timezone.utc)
+    doc = await demo_rate_limits_collection.find_one({"ip": ip})
+
+    if not doc:
+        return DEMO_TRIAGE_LIMIT
+
+    window_start = doc.get("window_start")
+    if window_start and window_start.tzinfo is None:
+        window_start = window_start.replace(tzinfo=timezone.utc)
+
+    if window_start and (now - window_start) >= timedelta(hours=DEMO_TRIAGE_WINDOW_HOURS):
+        return DEMO_TRIAGE_LIMIT
+
+    count = int(doc.get("count", 0))
+    return max(0, DEMO_TRIAGE_LIMIT - count)
+
+
+async def consume_demo_triage_quota(ip: str) -> tuple[bool, int]:
+    """
+    Check and consume one demo triage slot for this IP (24h rolling window).
+    Returns (allowed, remaining_after_this_call).
+    """
+    if not ip or ip == "unknown":
+        ip = "unknown_ip"
+
+    now = datetime.now(timezone.utc)
+    doc = await demo_rate_limits_collection.find_one({"ip": ip})
+
+    if not doc:
+        await demo_rate_limits_collection.insert_one(
+            {"ip": ip, "count": 1, "window_start": now}
+        )
+        return True, DEMO_TRIAGE_LIMIT - 1
+
+    window_start = doc.get("window_start")
+    if window_start and window_start.tzinfo is None:
+        window_start = window_start.replace(tzinfo=timezone.utc)
+
+    if not window_start or (now - window_start) >= timedelta(hours=DEMO_TRIAGE_WINDOW_HOURS):
+        await demo_rate_limits_collection.update_one(
+            {"ip": ip},
+            {"$set": {"count": 1, "window_start": now}},
+        )
+        return True, DEMO_TRIAGE_LIMIT - 1
+
+    count = int(doc.get("count", 0))
+    if count >= DEMO_TRIAGE_LIMIT:
+        return False, 0
+
+    await demo_rate_limits_collection.update_one({"ip": ip}, {"$inc": {"count": 1}})
+    return True, DEMO_TRIAGE_LIMIT - count - 1

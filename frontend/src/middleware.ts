@@ -9,7 +9,8 @@ export function middleware(request: NextRequest) {
     const isProtectedWorkspace =
         pathname.startsWith("/dashboard") ||
         pathname.startsWith("/tickets") ||
-        pathname.startsWith("/sop");
+        pathname.startsWith("/sop") ||
+        pathname.startsWith("/blogs");
 
     if (isProtectedWorkspace && !sessionToken) {
         return NextResponse.redirect(new URL("/register", request.url));
@@ -23,5 +24,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-    matcher: ["/dashboard/:path*", "/tickets/:path*", "/sop/:path*", "/login", "/register"],
+    matcher: ["/dashboard/:path*", "/tickets/:path*", "/sop/:path*", "/blogs/:path*", "/login", "/register"],
 };

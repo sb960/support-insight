@@ -1,6 +1,6 @@
 import os
 import json
-from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from database import (
@@ -20,6 +20,9 @@ from database import (
     update_blog_draft as update_blog_draft_record,
     list_blog_drafts,
     get_sop_by_tag,
+    consume_demo_triage_quota,
+    get_demo_triage_remaining,
+    DEMO_TRIAGE_LIMIT,
 )
 from openai import OpenAI
 from models import (
@@ -33,6 +36,9 @@ from models import (
     TokenResponse,
     SOPCreate,
     SOPResponse,
+    DemoTriageRequest,
+    DemoTriageResponse,
+    DemoSopInline,
 )
 from auth import (
     get_current_user,
@@ -106,19 +112,20 @@ def _safe_str_list(v):
     return []
 
 
-async def process_ticket_ingest(message: str, tenant_id: str) -> str:
-    """
-    Run the Deepseek compliance/confidence pipeline and persist a TicketDocument.
-    Returns the new ticket id.
-    """
-    predicted_tag = predict_tag_from_text(message) or classify_message_category(message)
+def _resolve_inline_sop(predicted_tag: str, inline_sops: list[DemoSopInline]) -> Optional[str]:
+    if not predicted_tag or not inline_sops:
+        return None
+    for sop in inline_sops:
+        if predicted_tag in sop.tags:
+            return sop.content
+    return None
 
-    sop_instructions = None
-    if predicted_tag:
-        sop_doc = await get_sop_by_tag(predicted_tag, tenant_id=tenant_id)
-        if sop_doc:
-            sop_instructions = sop_doc.get("content")
 
+async def analyze_ticket(message: str, sop_instructions: Optional[str] = None) -> dict:
+    """
+    Run the Deepseek compliance/confidence pipeline without persisting.
+    Returns a dict suitable for API responses or save_ticket().
+    """
     system_prompt = """You are a customer support triage assistant for a SaaS company.
 Analyze the customer message and output a JSON object with exactly these fields:
 {
@@ -164,7 +171,6 @@ Output ONLY valid JSON. No other text."""
     reasoning = result.get("reasoning")
 
     is_sop_compliant = _safe_bool(result.get("is_sop_compliant", False))
-
     sop_rules_followed = _safe_str_list(result.get("sop_rules_followed", []))
 
     avg_logprobs = extract_average_logprob(response)
@@ -176,24 +182,14 @@ Output ONLY valid JSON. No other text."""
         compliance_met=is_sop_compliant,
     )
 
-    analysis = TicketAnalysis(
-        category=category,
-        priority=priority,
-        draft_reply=draft_reply,
-        reasoning=reasoning,
-        is_sop_compliant=is_sop_compliant,
-        confidence_score=confidence_score,
-        sop_rules_followed=sop_rules_followed,
-    )
-
-    if not analysis.is_sop_compliant or analysis.confidence_score < CONFIDENCE_THRESHOLD:
+    if not is_sop_compliant or confidence_score < CONFIDENCE_THRESHOLD:
         status_val = "Escalated"
         escalation_reasons = []
-        if not analysis.is_sop_compliant:
+        if not is_sop_compliant:
             escalation_reasons.append("SOP violation")
-        if analysis.confidence_score < CONFIDENCE_THRESHOLD:
+        if confidence_score < CONFIDENCE_THRESHOLD:
             escalation_reasons.append(
-                f"low confidence ({analysis.confidence_score * 100:.0f}% < {CONFIDENCE_THRESHOLD * 100:.0f}%)"
+                f"low confidence ({confidence_score * 100:.0f}% < {CONFIDENCE_THRESHOLD * 100:.0f}%)"
             )
         internal_notes = (
             "Auto-escalated to human review due to "
@@ -204,22 +200,107 @@ Output ONLY valid JSON. No other text."""
         status_val = "Auto-Drafted"
         internal_notes = (
             f"Auto-drafted: AI indicated the reply follows company SOPs with "
-            f"{analysis.confidence_score * 100:.0f}% confidence."
+            f"{confidence_score * 100:.0f}% confidence."
         )
+
+    return {
+        "original_message": message,
+        "category": category,
+        "priority": priority,
+        "draft_reply": draft_reply,
+        "reasoning": reasoning,
+        "is_sop_compliant": is_sop_compliant,
+        "confidence_score": confidence_score,
+        "sop_rules_followed": sop_rules_followed,
+        "status": status_val,
+        "internal_notes": internal_notes,
+    }
+
+
+async def process_ticket_ingest(message: str, tenant_id: str) -> str:
+    """
+    Run the Deepseek compliance/confidence pipeline and persist a TicketDocument.
+    Returns the new ticket id.
+    """
+    predicted_tag = predict_tag_from_text(message) or classify_message_category(message)
+
+    sop_instructions = None
+    if predicted_tag:
+        sop_doc = await get_sop_by_tag(predicted_tag, tenant_id=tenant_id)
+        if sop_doc:
+            sop_instructions = sop_doc.get("content")
+
+    analysis = await analyze_ticket(message, sop_instructions)
 
     return await save_ticket(
         tenant_id=tenant_id,
-        original_message=message,
-        category=analysis.category,
-        priority=analysis.priority,
-        draft_reply=analysis.draft_reply,
-        reasoning=analysis.reasoning,
-        confidence_score=analysis.confidence_score,
-        is_sop_compliant=analysis.is_sop_compliant,
-        sop_rules_followed=analysis.sop_rules_followed,
-        status=status_val,
-        internal_notes=internal_notes,
+        original_message=analysis["original_message"],
+        category=analysis["category"],
+        priority=analysis["priority"],
+        draft_reply=analysis["draft_reply"],
+        reasoning=analysis["reasoning"],
+        confidence_score=analysis["confidence_score"],
+        is_sop_compliant=analysis["is_sop_compliant"],
+        sop_rules_followed=analysis["sop_rules_followed"],
+        status=analysis["status"],
+        internal_notes=analysis["internal_notes"],
     )
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+@app.post("/api/demo/triage", response_model=DemoTriageResponse)
+async def demo_triage(body: DemoTriageRequest, request: Request):
+    """
+    Public demo triage — runs the real AI pipeline but does not persist tickets.
+    Limited to DEMO_TRIAGE_LIMIT attempts per IP per 24h.
+    """
+    client_ip = _client_ip(request)
+    remaining_before = await get_demo_triage_remaining(client_ip)
+    if remaining_before <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Demo limit reached ({DEMO_TRIAGE_LIMIT} tries per 24 hours). Create a workspace to continue.",
+            headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Limit": str(DEMO_TRIAGE_LIMIT)},
+        )
+
+    predicted_tag = predict_tag_from_text(body.message) or classify_message_category(body.message)
+    sop_instructions = _resolve_inline_sop(predicted_tag or "", body.sops)
+
+    try:
+        analysis = await analyze_ticket(body.message, sop_instructions)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="AI response was not valid JSON")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error analyzing ticket: {e}")
+
+    allowed, remaining = await consume_demo_triage_quota(client_ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Demo limit reached ({DEMO_TRIAGE_LIMIT} tries per 24 hours). Create a workspace to continue.",
+            headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Limit": str(DEMO_TRIAGE_LIMIT)},
+        )
+
+    return DemoTriageResponse(**analysis, rate_limit_remaining=remaining)
+
+
+@app.get("/api/demo/remaining")
+async def demo_triage_remaining(request: Request):
+    """How many demo triage attempts remain for this IP (no side effects)."""
+    client_ip = _client_ip(request)
+    remaining = await get_demo_triage_remaining(client_ip)
+    return {
+        "remaining": remaining,
+        "limit": DEMO_TRIAGE_LIMIT,
+    }
 
 
 async def save_failed_ingest_ticket(message: str, tenant_id: str, reason: str) -> str:
