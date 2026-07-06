@@ -1,14 +1,8 @@
 """Confidence scoring for SupportInsight.
 
-This module replaces the old single-signal logprob scorer with a multi-signal
-confidence calculator designed for high-precision routing:
-
-- retrieval quality
-- evidence density
-- model certainty
-- compliance gating
-
-The implementation intentionally fails low when signals are missing.
+This module calculates a multi-signal confidence score designed for high-precision routing.
+It heavily weights SOP similarity (retrieval quality and evidence density) against the ticket,
+using empirical min-max scaling to prevent real-world scores from artificially flattening.
 """
 
 from __future__ import annotations
@@ -16,51 +10,31 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable, Optional
 
+# Shifted weights to prioritize SOP similarity (retrieval + evidence = 55%)
 DEFAULT_WEIGHTS = {
-    "retrieval": 0.35,
-    "evidence": 0.15,
-    "certainty": 0.30,
-    "compliance": 0.20,
+    "retrieval": 0.40,   # How well the ticket matches the SOP context
+    "evidence": 0.15,    # Number of matching keywords (capped realistically)
+    "certainty": 0.25,   # LLM Logprobs
+    "compliance": 0.20,  # Boolean SOP adherence
 }
 
 _STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "at",
-    "be",
-    "by",
-    "for",
-    "from",
-    "how",
-    "i",
-    "in",
-    "is",
-    "it",
-    "of",
-    "on",
-    "or",
-    "that",
-    "the",
-    "this",
-    "to",
-    "was",
-    "what",
-    "when",
-    "where",
-    "which",
-    "who",
-    "why",
-    "with",
-    "you",
-    "your",
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+    "how", "i", "in", "is", "it", "of", "on", "or", "that", "the",
+    "this", "to", "was", "what", "when", "where", "which", "who",
+    "why", "with", "you", "your",
 }
 
 
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
+
+
+def _min_max_scale(value: float, min_val: float, max_val: float) -> float:
+    """Scales a real-world observed value to a 0.0 - 1.0 range."""
+    if max_val == min_val:
+        return 0.0
+    return _clamp01((value - min_val) / (max_val - min_val))
 
 
 def _normalize_weights(weights: Optional[dict[str, float]]) -> dict[str, float]:
@@ -90,7 +64,7 @@ def _tokenize(text: Optional[str]) -> set[str]:
 
 
 def extract_average_logprob(response: Any) -> Optional[float]:
-    """Extract the average token log-probability from an OpenAI-style response."""
+    """Extract the average token log-probability from an OpenAI/DeepSeek-style response."""
     logprobs: list[float] = []
 
     try:
@@ -121,7 +95,7 @@ def extract_average_logprob(response: Any) -> Optional[float]:
 def derive_retrieval_signals(
     query_text: Optional[str],
     context_text: Optional[str],
-    max_evidence_chunks: int = 5,
+    max_evidence_chunks: int = 3,  # Lowered from 5 to reflect realistic keyword overlaps
 ) -> tuple[float, int]:
     """Derive simple retrieval quality and evidence density signals from text overlap."""
     query_tokens = _tokenize(query_text)
@@ -132,8 +106,10 @@ def derive_retrieval_signals(
 
     overlap = query_tokens & context_tokens
     evidence_count = min(len(overlap), max_evidence_chunks)
+    
+    # Calculate Jaccard-style overlap. This value is usually low (e.g., 0.1 to 0.4) in reality.
     retrieval_score = len(overlap) / max(len(query_tokens), 1)
-    return _clamp01(retrieval_score), evidence_count
+    return retrieval_score, evidence_count
 
 
 def calculate_confidence(
@@ -141,26 +117,29 @@ def calculate_confidence(
     evidence_count: Optional[int],
     avg_logprobs: Optional[float],
     compliance_met: bool,
-    max_evidence_chunks: int = 5,
+    max_evidence_chunks: int = 3, # Saturate at 3, not 5
     weights: Optional[dict[str, float]] = None,
     compliance_cap: float = 0.4,
 ) -> float:
-    """Calculate a gated, multi-signal confidence score in the range [0.0, 1.0]."""
+    """Calculate a gated, multi-signal confidence score centered on SOP similarity."""
     selected_weights = _normalize_weights(weights)
 
-    retrieval_norm = 0.0 if retrieval_score is None else _clamp01(retrieval_score)
-    evidence_norm = 0.0 if not evidence_count or evidence_count <= 0 else min(1.0, evidence_count / max_evidence_chunks)
-    # Model certainty:
-    # Instead of exp(), map the logprob range to [0, 1].
-    # Typical logprobs: 0.0 (perfect) to -2.0 (low confidence).
-    if avg_logprobs is None:
-        certainty_norm = 0.0
-    else:
-        # Clamp between -2.0 and 0.0, then map to 0.0 - 1.0.
-        # Anything better than 0 is 1.0, anything worse than -2 is 0.0.
-        certainty_norm = 1.0 - (max(0.0, min(2.0, abs(avg_logprobs))) / 2.0)
+    # 1. Retrieval Normalization: Map realistic overlap [0.15 to 0.60] -> [0.0, 1.0]
+    retrieval_val = 0.0 if retrieval_score is None else retrieval_score
+    retrieval_norm = _min_max_scale(retrieval_val, min_val=0.15, max_val=0.60)
+
+    # 2. Evidence Normalization
+    evidence_val = 0 if not evidence_count else evidence_count
+    evidence_norm = _min_max_scale(evidence_val, min_val=0, max_val=max_evidence_chunks)
+
+    # 3. Model Certainty: Map realistic logprobs [-2.5 to -0.2] -> [0.0, 1.0]
+    logprob_val = -3.0 if avg_logprobs is None else avg_logprobs
+    certainty_norm = _min_max_scale(logprob_val, min_val=-2.5, max_val=-0.2)
+
+    # 4. Compliance Gate
     compliance_norm = 1.0 if compliance_met else 0.0
 
+    # 5. Weighted Sum
     weighted_score = (
         selected_weights["retrieval"] * retrieval_norm
         + selected_weights["evidence"] * evidence_norm
@@ -168,6 +147,7 @@ def calculate_confidence(
         + selected_weights["compliance"] * compliance_norm
     )
 
+    # Apply hard cap if the SOP was fundamentally violated
     if not compliance_met:
         weighted_score = min(weighted_score, compliance_cap)
 
@@ -175,10 +155,8 @@ def calculate_confidence(
 
 
 if __name__ == "__main__":
-    import doctest
-
-    doctest.testmod()
-
-    print("Strong answer, compliant:      ", calculate_confidence(0.92, 3, -0.08, True))
-    print("Strong answer, non-compliant:  ", calculate_confidence(0.92, 3, -0.08, False))
-    print("No context, zero-token resp:   ", calculate_confidence(None, None, None, True))
+    # Test suite to verify the fix works with realistic real-world numbers
+    print("Strong SOP Match, Compliant: ", calculate_confidence(0.55, 3, -0.4, True))
+    print("Average SOP Match, Compliant:", calculate_confidence(0.30, 2, -1.2, True))
+    print("Poor SOP Match, Compliant:   ", calculate_confidence(0.10, 0, -2.1, True))
+    print("Strong Match, NON-compliant: ", calculate_confidence(0.55, 3, -0.4, False))
